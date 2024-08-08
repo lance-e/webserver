@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
-#include "epoll/epoll.h"
+#include "process_pool/process_pool.h"
 
 #define MAX_EVENTS_NUMBER 1024
 
@@ -40,21 +40,8 @@ int main(int argc , char* argv[]){
     ret = listen(listenfd, 5);
     assert(ret != -1 );
 
-    epoll_event events[MAX_EVENTS_NUMBER];     //to storage the effective event
-    int epollfd = epoll_create(5);
-    assert( epollfd != -1);
-
-    addfd(epollfd , listenfd , true);
-
-    while(1){
-        int ret = epoll_wait(epollfd ,events ,MAX_EVENTS_NUMBER , -1);
-        if (ret < 0 ){
-            printf("epoll failure\n");
-            return -1;
-        }
-        et(events , ret , epollfd , listenfd);      
-        //lt(events , ret , epollfd , listenfd);
-    }
+   // todo 
+    
     close(listenfd);
     return 0;
 }
