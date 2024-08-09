@@ -1,15 +1,76 @@
-#include "process_pool.h"
+#ifndef __PROCESS_POOL_H
+#define __PROCESS_POOL_H
+
+#include <stdio.h>
+#include <sys/socket.h>
+#include <assert.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 
-// pipe for signal
-static int sig_pipefd[2];
+
+#define BUFFER_SIZE 10
+
+//sub process class
+class process{
+public:
+    process():m_pid(-1){};
+public:
+    pid_t m_pid;
+    int m_pipefd[2];
+};
+
+//process pool
+template<typename T>
+class process_pool{
+private:
+    process_pool(int listenfd , int process_number = 8 );   // define to private , only could called by create();
+public:
+    static process_pool<T>* create(int listenfd , int process_number =  8){       // only one instance
+        if (m_instance == NULL){
+            m_instance = new process_pool<T>(listenfd , process_number);
+        }
+        return m_instance;
+    }
+
+    ~process_pool(){
+        delete m_instance;
+    }
+
+    void run();     //run the process pool
+
+    void setup_sig_pipe();
+    void run_child(); 
+    void run_parent();
+
+private:
+    static const int MAX_PROCESS_NUMBER = 16;
+    static const int USER_PER_PROC = 65536;
+    static const int MAX_EVENT_NUMBER = 10000;
+   
+    int m_process_number ;          //number of process
+    int m_idx ;                     //index of process
+    int m_epollfd;                  //epoll table fd 
+    int m_listenfd;                 //listen fd
+    bool m_stop;                    //use to judge should sub process should stop
+    process* m_sub_process;             // all sub process
+    static process_pool<T>* m_instance;     //process pool instance 
+
+};
 
 template<typename T>
 process_pool<T> * process_pool<T>::m_instance = NULL;
+
+// pipe for signal
+static int sig_pipefd[2];
 
 
 // set fd none blocking 
@@ -30,14 +91,14 @@ static void addfd(int epollfd , int fd ){
 }
 
 // remove target fd from epoll table
-static  void rmfd(int epollfd , int fd){
+static void removefd(int epollfd , int fd){
     epoll_ctl(epollfd , EPOLL_CTL_DEL , fd , 0);
     close(fd);
 }
 
 
 //signal handler 
-void sig_handler(int signal){
+static void sig_handler(int signal){
     int save_errno = errno;
     int msg = signal;
     send(sig_pipefd[1] , (char*)&msg, 1, 0);
@@ -45,7 +106,7 @@ void sig_handler(int signal){
 }
 
 //register signal handler
-void add_signal(int signal , void(handler)(int) , bool restart = true){
+static void add_signal(int signal , void(handler)(int) , bool restart = true){
     struct sigaction sa;
     memset(&sa , 0 , sizeof(sa));
     sa.sa_handler = handler;
@@ -66,7 +127,7 @@ process_pool<T>::process_pool(int listenfd , int process_number)
 
     m_sub_process = new process[process_number];
 
-    //create sub process  and pari socket
+    //create sub process  and pair socket
     for (int i = 0 ; i < process_number; i++){
         int ret = socketpair(PF_UNIX , SOCK_STREAM , 0 , m_sub_process[i].m_pipefd);
         assert(ret == 0 );
@@ -212,8 +273,6 @@ void process_pool<T>::run_parent(){
     addfd(m_epollfd, m_listenfd);
 
     epoll_event events[MAX_EVENT_NUMBER];
-    T* users = new T[USER_PER_PROC];
-    assert(users);
 
     int sub_process_counter = 0 ;
     int new_conn = 1;
@@ -260,7 +319,7 @@ void process_pool<T>::run_parent(){
                                 if ((pid = waitpid( -1 , &state , WNOHANG)) >  0){
                                     for (int i = 0 ; i < m_process_number ; i++){
                                         if (m_sub_process[i].m_pid == pid){
-                                            printf("child %d join\n" ,pid );
+                                            printf("child %d exit\n" ,pid );
                                             close(m_sub_process[i].m_pipefd[0]);
                                             m_sub_process[i].m_pid = -1;
                                         }
@@ -299,3 +358,5 @@ void process_pool<T>::run_parent(){
     close(m_epollfd);
 }
 
+
+#endif

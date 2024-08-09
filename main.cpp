@@ -8,10 +8,10 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
-#include "process_pool/process_pool.h"
+#include "process_pool.h"
+#include "echo.h"
 
 #define MAX_EVENTS_NUMBER 1024
-
 
 int main(int argc , char* argv[]){
     if (argc <=2 ){
@@ -40,7 +40,12 @@ int main(int argc , char* argv[]){
     ret = listen(listenfd, 5);
     assert(ret != -1 );
 
-   // todo 
+    //create and run process pool 
+    process_pool<echo_conn>* pool = process_pool<echo_conn>::create(listenfd , 8);
+    if (pool != NULL){
+        pool->run();
+        delete pool;
+    }
     
     close(listenfd);
     return 0;
