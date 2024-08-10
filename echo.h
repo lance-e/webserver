@@ -51,19 +51,7 @@ public:
                 }
                 buf[idx -1] = '\0';
 
-                 const char *response =
-                            "HTTP/1.1 200 OK\r\n"
-                            "Content-Type: application/json\r\n"
-                            "Cache-Control: max-age=60\r\n"
-                            "X-Request-Id: 12345abcde\r\n"
-                            "\r\n"
-                            "["
-                            "{\"id\":1,\"name\":\"John Doe\",\"email\":\"john@example.com\"},"
-                            "{\"id\":2,\"name\":\"Jane Smith\",\"email\":\"jane@example.com\"},"
-                            "{\"id\":3,\"name\":\"Bob Johnson\",\"email\":\"bob@example.com\"}"
-                            "]";
-
-
+                const char *response = "HTTP/1.1 200 OK\r\n";
 
                 //echo read data
                 send(echo_socketfd , response , strlen(response) , 0);
