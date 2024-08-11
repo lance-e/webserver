@@ -3,6 +3,8 @@
 
 #include <sys/stat.h>
 #include <sys/uio.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 //http connetion
 class http_conn{
@@ -15,13 +17,13 @@ public:
     //main state machine's state
     enum CHECK_STAT {CHECK_STAT_REQUESTLINE , CHECK_STAT_HEADER , CHECK_STAT_CONTENT};
     //http result
-    enum HTTP_CODE {NO_REQUEST , GET_REQUEST , BAD_REQUEST ,  NO_RESOURCE , FORBIDDEN_RESOURCE , FILE_REQUEST ,INTERNAL_ERROR ,CLOSED_CONNECTION};
+    enum HTTP_CODE {NO_REQUEST , GET_REQUEST , BAD_REQUEST ,  NO_RESOURCE , FORBIDDEN_REQUEST, FILE_REQUEST ,INTERNAL_ERROR ,CLOSED_CONNECTION};
     //state of line
     enum LINE_STATUS {LINE_OK = 0 , LINE_BAD , LINE_OPEN};
 
 public:
-    http_conn();
-    ~http_conn();
+    http_conn(){};
+    ~http_conn(){};
 
 public:
     //initial new connection
@@ -38,13 +40,13 @@ public:
 private:
     //initial connection
     void init();
-    //parse request
+    //parse request ,(main state mathine)
     HTTP_CODE process_read();
     //write response
     bool process_write(HTTP_CODE ret);
 
     //these used by process_read()
-    HTTP_CODE parse_requestline(char* text);
+    HTTP_CODE parse_request_line(char* text);
     HTTP_CODE parse_header(char* text);
     HTTP_CODE parse_content(char* text);
     HTTP_CODE do_request();
@@ -58,16 +60,20 @@ private:
     bool add_response(const char* format ,...);
     bool add_content(const char* content);
     bool add_status_line(int status ,const char* title);
-    bool add_header(int content_len);
+    bool add_header(int content_len); 
     bool add_content_len(int content_len);
     bool add_linger();
-    bool add_black_line();
+    bool add_blank_line();
 
 public:
     static int m_epollfd;       //all socket regiter in one epoll
     static int m_user_count;    //user count
 
 private:
+    int m_socketfd;
+    struct sockaddr_in m_address;
+
+
     //read buffer
     char m_read_buf[READ_BUFFER_SIZE];
     int m_read_idx;
@@ -77,6 +83,8 @@ private:
     int m_write_idx;
 
     int m_start_line;               //index of the parsing line
+
+    int m_checked_idx;              //index of the parsing charactor
 
     CHECK_STAT m_check_state;       //main state machine's state
 
@@ -90,7 +98,7 @@ private:
 
     char* m_host;
 
-    int m_connection_length;    //length of request 
+    int m_content_length;    //length of request 
 
     bool m_linger;          //is this request need stay connection
 
@@ -101,5 +109,12 @@ private:
     struct iovec m_iv[2];
     int m_iv_count;     //memory block count
 };
+
+
+int setnonblocking(int fd);
+void addfd(int epollfd , int fd ,bool one_shot);
+void removefd(int epollfd , int fd);
+void modfd(int epollfd , int fd , int ev);
+
 
 #endif
