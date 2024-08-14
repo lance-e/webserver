@@ -13,7 +13,6 @@
 
 #include "thread_pool.h"
 #include "http_conn.h"
-#include "locker.h"
 
 #define MAX_FD 65536
 #define MAX_EVENTS_NUMBER 1024
@@ -32,7 +31,7 @@ static void add_signal(int signal , void(handler)(int) , bool restart = true){
 
 //send error information
 void show_error(int connfd , const char* info){
-    printf("%s" , info);
+    printf("show_error: %s\n" , info);
     send(connfd , info ,strlen(info), 0);
     close(connfd);
 }
@@ -93,7 +92,7 @@ int main(int argc , char* argv[]){
 
     
     epoll_event events[MAX_EVENTS_NUMBER];
-    int epollfd = epoll_create(5);
+    int epollfd = epoll_create(10);
     assert(epollfd);
     addfd(epollfd , listenfd , false);
     http_conn::m_epollfd = epollfd ;
@@ -112,6 +111,8 @@ int main(int argc , char* argv[]){
                 socklen_t  client_addr_len = sizeof(client_addr);
                 int connfd = accept(listenfd , (struct sockaddr*)&client_addr , &client_addr_len);
 
+                printf("new connection%d\n" , connfd);
+
                 if (connfd < 0){
                     printf("errno is %d\n" , errno);
                     continue;
@@ -124,15 +125,18 @@ int main(int argc , char* argv[]){
 
                 users[connfd].init(connfd , client_addr);
             }else if (events[i].events & (EPOLLRDHUP | EPOLLERR | EPOLLHUP)){
+                printf("exception happened\n" );
                 //exception handing : close connection
                 users[socketfd].close_conn();
             }else if (events[i].events & EPOLLIN){
+                printf("epollin event\n");
                 if ( users[socketfd].read()){
                     pool->append( users + socketfd );
                 }else {
                     users[socketfd].close_conn();
                 }
             }else if (events[i].events & EPOLLOUT ){
+                printf("epollout event\n");
                 if (!users[socketfd].write() ){
                     users[socketfd].close_conn();
                 }

@@ -61,6 +61,7 @@ private:
     bool add_content(const char* content);
     bool add_status_line(int status ,const char* title);
     bool add_header(int content_len); 
+    bool add_content_type(const char* type);
     bool add_content_len(int content_len);
     bool add_linger();
     bool add_blank_line();

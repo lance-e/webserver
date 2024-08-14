@@ -60,7 +60,7 @@ void removefd(int epollfd , int fd){
 void modfd(int epollfd , int fd , int ev){
     epoll_event event; 
     event.data.fd = fd;
-    event.events = ev | EPOLLONESHOT | EPOLLRDHUP ;
+    event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP ;
     epoll_ctl(epollfd , EPOLL_CTL_MOD , fd , & event);
 }
 
@@ -79,6 +79,8 @@ void http_conn::init(int socketfd , struct sockaddr_in& client_addr){
 }
 
 void http_conn::init(){
+
+    m_check_state = CHECK_STAT_REQUESTLINE;
     m_read_idx = 0 ; 
     m_write_idx = 0 ;
     m_start_line = 0 ;
@@ -99,6 +101,7 @@ void http_conn::init(){
 void http_conn::close_conn(bool real_close){
     if (real_close && (m_socketfd != -1)){
         removefd(m_epollfd , m_socketfd);
+        printf("close connection : %d\n" , m_socketfd);
         m_socketfd = -1;
         m_user_count--;
     }
@@ -113,7 +116,7 @@ bool http_conn::read(){
 
     int bytes = 0;
     while(true){
-        bytes = recv(m_socketfd , m_read_buf , READ_BUFFER_SIZE - m_read_idx , 0);
+        bytes = recv(m_socketfd , m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx , 0);
         if (bytes < 0 ){
             if ((errno == EAGAIN ) || (errno == EWOULDBLOCK)){
                 break;
@@ -137,7 +140,8 @@ http_conn::HTTP_CODE http_conn::process_read(){
     while(((m_check_state == CHECK_STAT_CONTENT ) && (line_state == LINE_OK)) ||((line_state = parse_line())== LINE_OK) ){
         text = get_line();     
         m_start_line = m_checked_idx;
-        printf("get 1 http line :%s\n" , text);
+        printf("got 1 http line: %s\n" , text);
+
         switch (m_check_state){
             case CHECK_STAT_REQUESTLINE:
                 {
@@ -149,7 +153,7 @@ http_conn::HTTP_CODE http_conn::process_read(){
                 }
             case CHECK_STAT_HEADER:
                 {
-                    ret = parse_request_line(text);
+                    ret = parse_header(text);
                     if (ret == BAD_REQUEST){
                         return BAD_REQUEST;
                     }else if (ret == GET_REQUEST){
@@ -159,7 +163,7 @@ http_conn::HTTP_CODE http_conn::process_read(){
                 }
             case CHECK_STAT_CONTENT:
                 {
-                    ret = parse_request_line(text);
+                    ret = parse_content(text);
                     if (ret == GET_REQUEST){
                         return do_request();
                     }
@@ -179,20 +183,18 @@ http_conn::HTTP_CODE http_conn::process_read(){
 //sub state machine
 http_conn::LINE_STATUS http_conn::parse_line(){
     char temp;
-    for (; m_checked_idx < m_read_idx ;m_checked_idx++){
+    for (; m_checked_idx < m_read_idx ;++m_checked_idx){
         temp = m_read_buf[m_checked_idx];
         if (temp == '\r'){
-            if (m_checked_idx + 1 == m_read_idx){
+            if ((m_checked_idx + 1) == m_read_idx){
                 return LINE_OPEN;
-            }
-            if (m_read_buf[m_checked_idx + 1 ] == '\n'){
+            }else if (m_read_buf[m_checked_idx + 1 ] == '\n'){
                 m_read_buf[m_checked_idx++] = '\0';
                 m_read_buf[m_checked_idx++] = '\0';
                 return LINE_OK;
             }
             return LINE_BAD;
-        }
-        if (temp == '\n'){
+        }else if (temp == '\n'){
             if ((m_checked_idx > 1) && (m_read_buf[m_checked_idx - 1] == '\r')){
                 m_read_buf[m_checked_idx -1 ] = '\0';
                 m_read_buf[m_checked_idx ++ ] = '\0';
@@ -228,7 +230,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text){
     *m_version++ = '\0';
 
     m_version += strspn(m_version , " \t");
-    if (strcasecmp(m_version , "HTTP/1.1") != 0){
+    if (strcasecmp(m_version , "HTTP/1.0") != 0){
         return BAD_REQUEST; 
     }
     
@@ -290,16 +292,21 @@ http_conn::HTTP_CODE http_conn::do_request(){
     strncpy(m_real_file + len , m_url , FILENAME_LEN - len - 1);
 
     if (stat(m_real_file , &m_file_stat) < 0){
+        printf("NO_RESOURCE\n");
         return NO_RESOURCE;
-    }else if (!(m_file_stat.st_mode & S_IROTH)){
+    }
+    if (!(m_file_stat.st_mode & S_IROTH)){
+        printf("FORBIDDEN_REQUEST\n");
         return FORBIDDEN_REQUEST;
-    }else if (S_ISDIR(m_file_stat.st_mode)){
+    }if (S_ISDIR(m_file_stat.st_mode)){
+        printf("BAD_REQUEST\n");
         return BAD_REQUEST;
     }
 
     int fd = open(m_real_file , O_RDONLY);
     m_file_address = (char*)mmap(0 , m_file_stat.st_size , PROT_READ, MAP_PRIVATE , fd , 0 );
     close(fd);
+    printf("FILE_REQUEST\n");
     return FILE_REQUEST;
 }
 
@@ -327,9 +334,9 @@ bool http_conn::write(){
     }
     while(true){
         temp = writev(m_socketfd , m_iv , m_iv_count);
-        if (temp < 0 ){
+        if (temp <= -1 ){
             if (errno == EAGAIN){
-                modfd(m_epollfd , m_socketfd , EPOLLIN);
+                modfd(m_epollfd , m_socketfd , EPOLLOUT);
                 return true;
             }
             unmap();
@@ -346,7 +353,7 @@ bool http_conn::write(){
                 return true;
             }else {
                 modfd(m_epollfd ,m_socketfd , EPOLLIN);
-                return true;
+                return false;
             }
         }
     }
@@ -375,14 +382,19 @@ bool http_conn::add_content(const char* content){
 }
 
 bool http_conn::add_status_line(int status , const char* title){
-    return add_response("%s %d %s\r\n" , "HTTP/1.1" , status , title);
+    return add_response("%s %d %s\r\n" , "HTTP/1.0" , status , title);
 }
 
 bool http_conn::add_header(int content_len){
+    //add_content_type("text/html");      //temporary is html
     add_content_len(content_len);
     add_linger();
     add_blank_line();
     return true;
+}
+
+bool http_conn::add_content_type(const char* type){
+    return add_response("Content-Type: %s\r\n" , type);
 }
 
 bool http_conn::add_content_len(int content_len){
@@ -440,6 +452,7 @@ bool http_conn::process_write(HTTP_CODE ret){
             {
                 add_status_line(200 , ok_200_title);
                 if (m_file_stat.st_size != 0){
+                    add_header(m_file_stat.st_size);
                     m_iv[0].iov_base = m_write_buf;
                     m_iv[0].iov_len = m_write_idx;
                     m_iv[1].iov_base = m_file_address;
@@ -461,6 +474,7 @@ bool http_conn::process_write(HTTP_CODE ret){
     }
     m_iv[0].iov_base = m_write_buf;
     m_iv[0].iov_len = m_write_idx;
+    m_iv_count = 1;
     return true;
 }
 

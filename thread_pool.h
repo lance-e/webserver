@@ -90,7 +90,7 @@ void thread_pool<T>::run(){
         T* request = m_workqueue.front();   //get the front request from work list
         m_workqueue.pop_front();
         m_queuelocker.unlock();
-        if(request == NULL){
+        if( !request ){
             continue;
         }
         request->process();
